@@ -1,0 +1,46 @@
+---
+title: "Overfit"
+author: "Jon Peters"
+date: "10/12/2020"
+output: html_document
+---
+
+```{r}
+library("tidyverse")
+library("caret")
+
+train <- read_csv("train.csv")
+test <- read_csv("test.csv")
+
+train$target <- ifelse(train$target == 1, 'yes', 'no')
+train$target <- as.factor(train$target)
+
+```
+
+```{r}
+tune.grid = expand.grid(nIter = seq(1, 100, 1))
+
+boost <- train(form=target~., 
+                data=(train %>% select(-id)),
+                method = "adaboost",
+                trControl=trainControl(method="repeatedcv",
+                                       number=10,
+                                       repeats = 5)
+               #preProc = c("center","scale"),
+               #tuneGrid = tune.grid,
+               #verbose = FALSE
+                )
+
+plot(boost)
+boost$bestTune
+boost$results
+```
+
+
+```{r}
+preds <- data.frame(id=test$id, target = predict(boost, newdata = test))
+preds$target <- ifelse(preds$target == 'yes', 1, 0)
+
+write_csv(x=preds, path="./Peters_sub.csv")
+```
+
