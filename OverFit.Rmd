@@ -8,39 +8,258 @@ output: html_document
 ```{r}
 library("tidyverse")
 library("caret")
+library("fakeR")
 
 train <- read_csv("train.csv")
 test <- read_csv("test.csv")
 
+train1 <- train %>% filter(target == 1)
+train0 <- train %>% filter(target == 0)
+
+# A <- function(x) sample(min(x):max(x), size = 500, replace = TRUE)
+# 
+# train1 <- as.data.frame(apply(train1[,3:302 ], 2, A))
+# train1$target <- 1
+# train1$id <- 250
+# 
+# train0 <- as.data.frame(apply(train0[,3:302 ], 2, A))
+# train0$target <- 0
+# train0$id <- 251
+# 
+# train <- rbind(train, train1, train0)
+# 
+# train <- train[ sample(nrow(train)) ,]
+
 train$target <- ifelse(train$target == 1, 'yes', 'no')
 train$target <- as.factor(train$target)
 
+
+
 ```
 
 ```{r}
-tune.grid = expand.grid(nIter = seq(1, 100, 1))
+tune.grid = expand.grid(alpha = .2,
+                        lambda = 0.02990047)
+
+tr.grid <-trainControl(method="repeatedcv",
+                      classProbs = TRUE,
+                      number=10,
+                      repeats = 3,
+                      summaryFunction = prSummary)
 
 boost <- train(form=target~., 
-                data=(train %>% select(-id)),
-                method = "adaboost",
-                trControl=trainControl(method="repeatedcv",
-                                       number=10,
-                                       repeats = 5)
-               #preProc = c("center","scale"),
-               #tuneGrid = tune.grid,
-               #verbose = FALSE
-                )
+              data=(train %>% select(-id)),
+              method = "glmnet",
+              trControl=tr.grid,
+              #preProc = "pca",
+              metric = "AUC",
+              tuneGrid = tune.grid,
+              verbose = FALSE
+              )
 
-plot(boost)
-boost$bestTune
-boost$results
+
+ImpMeasure<-data.frame(varImp(boost,scale=F)$importance)
+ImpMeasure$Vars<-row.names(ImpMeasure)
+var_list <- ImpMeasure[order(-ImpMeasure$Overall),][1:100,]$Vars
+
+var_list <- noquote(var_list)
+var_list <- gsub("`", "", var_list)
+var_list <- as.integer(var_list)
 ```
 
 
 ```{r}
-preds <- data.frame(id=test$id, target = predict(boost, newdata = test))
-preds$target <- ifelse(preds$target == 'yes', 1, 0)
+train <- train %>% select(id, target, var_list)
+```
 
-write_csv(x=preds, path="./Peters_sub.csv")
+
+```{r}
+tune.grid = expand.grid(n.trees = 50,
+                        interaction.depth = 1,
+                        shrinkage = .1,
+                        n.minobsinnode = 10)
+
+tr.grid <-trainControl(method="repeatedcv",
+                      classProbs = TRUE,
+                      number=5,
+                      search = "grid",
+                      repeats = 10)
+
+boost1 <- train(form=target~., 
+              data=(train %>% select(-id)),
+              method = "gbm",
+              trControl=tr.grid,
+              metric = "ROC",
+              tuneGrid = tune.grid,
+              verbose = FALSE
+              )
+
+
+#plot(boost1)
+boost1$bestTune
+boost1$results
+
+
+```
+
+
+
+```{r}
+tune.grid = expand.grid(alpha = 1,
+                        lambda = .0154028)
+
+tr.grid <-trainControl(method="repeatedcv",
+                      classProbs = TRUE,
+                      number=5,
+                      search = "grid",
+                      repeats = 10)
+
+boost2 <- train(form=target~., 
+              data=(train %>% select(-id)),
+              method = "glmnet",
+              trControl=tr.grid,
+              metric = "ROC",
+              tuneGrid = tune.grid,
+              verbose = FALSE
+              )
+
+
+#plot(boost2)
+boost2$bestTune
+boost2$results
+
+```
+
+
+
+
+```{r}
+# tune.grid = expand.grid(kmax = 11,
+#                         distance = 2,
+#                         kernel = "optimal")
+# 
+# tr.grid <-trainControl(method="repeatedcv",
+#                       classProbs = TRUE,
+#                       number=10,
+#                       repeats = 3,
+#                       summaryFunction = prSummary)
+# 
+# boost2 <- train(form=target~., 
+#               data=(train %>% select(-id)),
+#               method = "ORFlog",
+#               trControl=tr.grid,
+#              #preProc = c("center", "scale", "pca"),
+#               metric = "AUC",
+#               #tuneGrid = tune.grid,
+#               verbose = FALSE
+#               )
+# 
+# plot(boost2)
+# boost2$bestTune
+# boost2$results
+```
+
+
+
+```{r}
+tune.grid = expand.grid(nIter = 35)
+
+tr.grid <-trainControl(method="repeatedcv",
+                      classProbs = TRUE,
+                      number=10,
+                      repeats = 3,
+                      summaryFunction = prSummary)
+boost3 <- train(form=target~., 
+              data=(train %>% select(-id)),
+              method = "LogitBoost",
+              trControl=tr.grid,
+              #preProc = c("center", "scale", "pca"),
+              metric = "ROC",
+              tuneGrid = tune.grid,
+              verbose = FALSE
+              )
+
+# plot(boost3)
+# boost3$bestTune
+# boost3$results
+```
+
+
+```{r}
+tune.grid = expand.grid(laplace = 0,
+                        usekernel = TRUE,
+                        adjust = 1)
+
+tr.grid <-trainControl(method="repeatedcv",
+                      classProbs = TRUE,
+                      number=10,
+                      repeats = 3,
+                      summaryFunction = prSummary)
+
+boost4 <- train(form=target~., 
+              data=(train %>% select(-id)),
+              method = "naive_bayes",
+              trControl=tr.grid,
+              #preProc = c("center", "scale", "pca"),
+              metric = "ROC",
+              tuneGrid = tune.grid,
+              verbose = FALSE
+              )
+
+#plot(boost4)
+boost4$bestTune
+boost4$results
+```
+
+
+```{r}
+final <- data.frame(id=test$id)
+
+final$gbm <- (predict(boost1, newdata = test, type="prob")[,2])
+
+final$glmnet <- (predict(boost2, newdata = test, type="prob")[,2])
+
+final <- final %>% mutate(target = (gbm + glmnet)/2 ) %>%
+   select(-gbm, -glmnet)
+
+
+write_csv(x=final, path="./Peters_sub.csv")
+
+beepr::beep()
+
+
+
+# preds <- (predict(boost, newdata = test, type="prob")[2])
+#   
+# final$cost <- preds$yes
+# 
+# 
+# # preds <- (predict(boost2, newdata = test, type="prob")[2])
+# #   
+# # final$kknn <- preds$yes
+# 
+# preds <- (predict(boost3, newdata = test, type="prob")[2])
+#   
+# final$lr <- preds$yes
+# 
+# 
+# preds <- (predict(boost4, newdata = test, type="prob")[2])
+#   
+# final$nb <- preds$yes
+# 
+# 
+# 
+# final <- final %>% mutate(target = (cost + lnet + lr)/3 ) %>%
+#   select(-cost, -lr, -lnet, -nb)
+# 
+# write_csv(x=final, path="./Peters_sub.csv")
+# 
+# beepr::beep()
+# 
+# 
+# 
+# write_csv(x=final, path="./Peters_sub.csv")
+# 
+# beepr::beep()
 ```
 
