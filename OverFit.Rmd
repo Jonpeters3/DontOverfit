@@ -5,17 +5,37 @@ date: "10/12/2020"
 output: html_document
 ---
 
+Visit my official kaggle notebook [here](https://www.kaggle.com/jonpeters3/overfitting).
+
+
+In "Don't Overfit!! II" The goal is to be able to predict at a high rate over 19,750 rows of test data with only 250 rows on training data. So this raises the question, how do you not overfit?
+
+To be honest, I wasn't entirely sure myself. I always knew that we needed a good size training/test split along with cross validation techniques to eliminate any bias, but it still made me question, *was this enough??*
+
+So I did some reading, and I think [elitedatascience](https://elitedatascience.com/overfitting-in-machine-learning) offers the simplest idead and explination that helped me with my model!
+
+> Cross-validation
+> Train with more data
+> Remove features
+> Early stopping
+> Regularization
+> Ensembling
+
+I honestly tried all of these methods myself, but below I walk through what worked best for me.
+
 ```{r}
 library("tidyverse")
 library("caret")
 
-
 train <- read_csv("train.csv")
 test <- read_csv("test.csv")
+```
 
-train1 <- train %>% filter(target == 1)
-train0 <- train %>% filter(target == 0)
-
+**Train with more data**
+Below was a method that I used to simulate more data. The attempt was to separate  our binomial response and simulate  extra data points to train with. However, after multiple runs, it actually decreased the predictive rate on my test set. So I chose to exclude it from my final run.
+```{r}
+# train1 <- train %>% filter(target == 1)
+# train0 <- train %>% filter(target == 0)
 # A <- function(x) sample(min(x):max(x), size = 500, replace = TRUE)
 # 
 # train1 <- as.data.frame(apply(train1[,3:302 ], 2, A))
@@ -29,7 +49,11 @@ train0 <- train %>% filter(target == 0)
 # train <- rbind(train, train1, train0)
 # 
 # train <- train[ sample(nrow(train)) ,]
+```
 
+**Pre-processing**
+Combining our training and testing set, we center our data just to remove a little of the variability and bias that may exists between our training and testing set.Combining our data sets in this fashion causes a bit of data leakage, but it's a Kaggle competition, so we are soley focused on fitting specifically to our test set.
+```{r}
 train$target <- ifelse(train$target == 1, 'yes', 'no')
 train$target <- as.factor(train$target)
 
@@ -43,72 +67,124 @@ train <- overfit %>% filter(!is.na(target)) %>% select(-Set)
 test <- overfit %>% filter(is.na(target)) %>% select(-Set)
 ```
 
+**Remove features**
+Our data set contains a total of 300 features and obviously not all of them will be significant in predicting our response. So we train our current model and find the best fit we can for what we have now and we will then determine what features best explain out data.
+
 ```{r}
-tune.grid = expand.grid(alpha = .1,
-                        lambda = 0.03586641)
+tune.grid = expand.grid(alpha = 1,
+                        lambda = seq(.03, .04, .001))
 
 tr.grid <-trainControl(method="repeatedcv",
                       classProbs = TRUE,
-                      number=10,
-                      repeats = 3,
+                      number=3,
+                      repeats = 10,
                       summaryFunction = prSummary)
 
 boost <- train(form=target~., 
               data=(train %>% select(-id)),
               method = "glmnet",
               trControl=tr.grid,
-              #preProc = "pca",
-              metric = "AUC",
+              metric = "ROC",
               tuneGrid = tune.grid,
               verbose = FALSE
               )
 #plot(boost)
 boost$bestTune
-boost$results
+#boost$results
 
+imp<-varImp(boost)
+imp$importance
+
+ImpMeasure<-data.frame(varImp(boost)$importance)
+ImpMeasure$Vars<-row.names(ImpMeasure)
 
 ```
 
+Now that we have a list of features sorted by their importance, I am going to out them through a for loop that will test what number of features is best for our model. Keep in mind, I am running these through a pretuned model that I had been working on, so our selection wont be exact due to variability, but it will good enough for now.
 
 ```{r}
-
-```
-
-
-```{r}
-  ImpMeasure<-data.frame(varImp(boost,scale=F)$importance)
-  ImpMeasure$Vars<-row.names(ImpMeasure)
-  var_list <- ImpMeasure[order(-ImpMeasure$Overall),][1:239,]$Vars
+vects <- c()
+temp <- train
+for( i in 1:300){
   
+  train <- temp
+  var_list <- ImpMeasure[order(-ImpMeasure$Overall),][1:i,]$Vars
+    
   var_list <- noquote(var_list)
   var_list <- gsub("`", "", var_list)
   var_list <- as.integer(var_list)
-  
+    
   train <- train %>% select(id, target, var_list)
   
-  tune.grid = expand.grid(n.trees = 150,
-                          interaction.depth = 1,
-                          shrinkage = .1,
-                          n.minobsinnode = 10)
-  
+  tune.grid = expand.grid(n.trees = seq(100, 500, 5),
+                            interaction.depth = 2,
+                            shrinkage = .1,
+                            n.minobsinnode = 10)
+    
   tr.grid <-trainControl(method="repeatedcv",
-                        classProbs = TRUE,
-                        number=5,
-                        search = "grid",
-                        repeats = 10)
-  
+                          classProbs = TRUE,
+                          number=5,
+                          repeats = 10)
+    
   boost1 <- train(form=target~., 
-                data=(train %>% select(-id)),
-                method = "gbm",
-                trControl=tr.grid,
-                #preProc = c("center"),
-                metric = "AUC",
-                tuneGrid = tune.grid,
-                verbose = FALSE
-                )
+                  data=(train %>% select(-id)),
+                  method = "gbm",
+                  trControl=tr.grid,
+                  #preProc = c("center"),
+                  metric = "Accuracy",
+                  tuneGrid = tune.grid,
+                  verbose = FALSE
+                  )
   
+  
+  vects <- c(vects, max(boost1$results$Accuracy))
+}
+
+train <- temp
+rm(temp)
+
+which.max(vects)
+```
+
+When I ran this, I found that about 236 features is what we need to get out best measure of accuracy with this specific model., so we re-create our dataframe with the top 236 features and re-tune until we have a good model.
+
+```{r}
+var_list <- ImpMeasure[order(-ImpMeasure$Overall),][1:which.max(vects),]$Vars
+    
+var_list <- noquote(var_list)
+var_list <- gsub("`", "", var_list)
+var_list <- as.integer(var_list)
+    
+train <- train %>% select(id, target, var_list)
+```
+
+**Model Fitting**
+Here we use a basic boosting model to fit our data. I tried others like generalized linear model, random forest, boosted logistic regression and more, but gbm was the one that has returned the best outputs for me.
+
+```{r}
+tune.grid = expand.grid(n.trees = seq(550, 650, 1),
+                            interaction.depth = 2,
+                            shrinkage = .018,
+                            n.minobsinnode = 11)
+    
+tr.grid <-trainControl(method="repeatedcv",
+                          classProbs = TRUE,
+                          number=5,
+                          repeats = 10)
+    
+boost1 <- train(form=target~., 
+                  data=(train %>% select(-id)),
+                  method = "gbm",
+                  trControl=tr.grid,
+                  metric = "Accuracy",
+                  tuneGrid = tune.grid,
+                  verbose = FALSE
+                  )
 
 
+plot(boost1)
+boost1$bestTune
+boost1$results
 ```
 
 
